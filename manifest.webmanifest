@@ -1,0 +1,23 @@
+{
+  "name": "目覚めたら表？",
+  "short_name": "目覚めたら表？",
+  "description": "表なら1回、裏なら2回起こす眠りの実験。実験ごとと起きた回ごとで表の割合を数える1日5問",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f3efe4",
+  "theme_color": "#f3efe4",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
