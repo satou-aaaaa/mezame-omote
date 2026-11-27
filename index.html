@@ -1782,6 +1782,8 @@ function early() { if (cur && !cur.done && ((cur.wrong && cur.wrong.length) || c
 // keep は保存した回が同じ問題のときだけ early する（古いタブが復習の段を戻さない）。別のタブで2段目へ進んでいたら、この画面も2段目にする
 function keep() { let ok = false; const st0 = cur.step; save((s) => { const r = s.runs[MODE]; if (!same(r)) return; ok = true; const was = r.cur && r.cur.i === cur.i && r.cur.tag === cur.tag ? r.cur : { wrong: [], hints: 0 }; cur.hints = Math.max(cur.hints, was.hints || 0); for (const w of was.wrong || []) if (!cur.wrong.includes(w)) cur.wrong.push(w); cur.step = Math.max(cur.step, was.step || 1); for (const w of was.w2 || []) if (!cur.w2.includes(w)) cur.w2.push(w); if (!cur.jd && was.jd) cur.jd = was.jd; if (was.h2) cur.h2 = 1; r.cur = { i: cur.i, tag: cur.tag, wrong: cur.wrong.slice(), hints: cur.hints, step: cur.step, w2: cur.w2.slice(), jd: cur.jd, h2: cur.h2 ? 1 : 0 }; }); if (ok) early(); if (ok && cur.step === 2 && st0 !== 2) { const c0 = cur; setTimeout(() => { if (cur === c0 && !cur.done && cur.step === 2) askWhy(); }, 0); } }
 const missOf = () => cur.wrong.length + cur.hints + cur.w2.length; // 2段目のまちがいも数える
+// 別のタブでこの問題の1段目を終えていたら、古い1段目の画面からヒント・まちがいを足さず、keep で2段目へそろえる（CodeRabbit mezame-omote#1）
+function ahead() { const r = load().runs[MODE]; if (cur.step !== 1 || !same(r) || !r.cur || r.cur.i !== cur.i || r.cur.tag !== cur.tag || r.cur.step !== 2) return false; keep(); return true; }
 
 // コインの出やすさの言い方（1/2 は「ふつうのコイン」）
 const pText = (P) => (P.n * 2 === P.d ? "ふつうのコイン" : `${P.d}回に${P.n}回 表`);
@@ -1847,7 +1849,7 @@ function paint() {
   const h = $("hint"); if (h) h.disabled = cur.done || cur.hints >= 2;
   $("hintbox").innerHTML = cur.hints && !cur.done ? `<div class="hint" role="status">💡 ${esc(cur.P.look)}${cur.hints >= 2 ? `<br>💡 ${esc(cur.P.key)}` : ""}</div>` : "";
 }
-function hint() { if (cur.done || cur.hints >= 2) return; if (cur.step === 2) { if (cur.h2 || !left2Of().length) return; cur.h2 = 1; cur.hints++; keep(); return paintWhy(); } cur.hints++; keep(); paint(); }
+function hint() { if (cur.done || cur.hints >= 2) return; if (cur.step === 2) { if (cur.h2 || !left2Of().length) return; cur.h2 = 1; cur.hints++; keep(); return paintWhy(); } if (ahead()) return; cur.hints++; keep(); paint(); }
 
 // ---- 何千回もまわす：同じ決まりで G.SIMN 回（種は問題から。だれでも同じ結果）----
 // 「動きを減らす」では、はじめから終わりの数を出す。数は 100回ごとに伸ばす
@@ -1864,7 +1866,7 @@ function simHtml(P, S, t) {
     <div class="mt"><div class="lb"><span>実験ごと：表の実験 ÷ 実験</span><b id="sim-x">${hx}/${n} ＝ ${pct(px)}</b></div>${meter(px, fracOf(P.pf), "答え " + P.pf)}</div>
     <div class="mt"><div class="lb"><span>起きた回ごと：表の目覚め ÷ 目覚め</span><b id="sim-w">${hw}/${w} ＝ ${pct(pw)}</b></div>${meter(pw, fracOf(P.qf), "答え " + P.qf)}</div>
     <div class="sleg"><span><em style="background:#f6d77a"></em>表（無地）</span><span><em style="background:repeating-linear-gradient(45deg,#dde8f4 0 3px,#c4d6ea 3px 6px)"></em>裏（しま）</span><span><em style="border:0;border-left:3px dashed var(--shu2);border-radius:0;width:4px"></em>答えの位置</span></div>
-    <p class="vh" role="status">${S.n}回まわすと、実験ごとは ${hx}/${n}（${pct(px)}）、起きた回ごとは ${hw}/${w}（${pct(pw)}）。答えは ${P.pf} と ${P.qf}。</p>
+    <p class="vh" role="status">${n}回まわすと、実験ごとは ${hx}/${n}（${pct(px)}）、起きた回ごとは ${hw}/${w}（${pct(pw)}）。答えは ${P.pf} と ${P.qf}。</p>
   </div>`;
 }
 const fracOf = (s) => { const [x, y] = String(s).split("/").map(Number); return [x, y || 1]; };
@@ -1921,6 +1923,7 @@ function choose(j) {
   if (cur.done || cur.step === 2) return;
   const t = cur.P.opts[j];
   if (!same(load().runs[MODE])) { toast("別の画面で先に進んでいます"); return play(); }
+  if (ahead()) return;
   if (t !== cur.P.ans) {
     if (cur.wrong.includes(t)) return;
     buzz(40);
@@ -1937,7 +1940,9 @@ function choose(j) {
 function solved() {
   cur.done = true; buzz([10, 40, 10]);
   const P = cur.P;
-  const s = save((s) => { const r = s.runs[MODE]; if (!same(r)) return; const was = r.cur && r.cur.i === cur.i && r.cur.tag === cur.tag ? r.cur : null; if (was) { cur.hints = Math.max(cur.hints, was.hints || 0); for (const w of was.wrong || []) if (!cur.wrong.includes(w)) cur.wrong.push(w); for (const w of was.w2 || []) if (P.opts2.includes(w) && !cur.w2.includes(w)) cur.w2.push(w); } r.res.push({ m: missOf() }); r.cur = null; s.dex[P.kind] = (s.dex[P.kind] || 0) + 1; }); // 別のタブで使ったヒント・まちがいも合わせてから数える
+  let closed = false; // あとからの日を、別の画面で今日の5問として遊び終えていたら、数えない（bank も記録しない。CodeRabbit mezame-omote#1）
+  const s = save((s) => { const r = s.runs[MODE]; if (!same(r)) return; if (r.mode === "a" && s.days[r.date]) { closed = true; s.runs[MODE] = null; return; } const was = r.cur && r.cur.i === cur.i && r.cur.tag === cur.tag ? r.cur : null; if (was) { cur.hints = Math.max(cur.hints, was.hints || 0); for (const w of was.wrong || []) if (!cur.wrong.includes(w)) cur.wrong.push(w); for (const w of was.w2 || []) if (P.opts2.includes(w) && !cur.w2.includes(w)) cur.w2.push(w); } r.res.push({ m: missOf() }); r.cur = null; s.dex[P.kind] = (s.dex[P.kind] || 0) + 1; }); // 別のタブで使ったヒント・まちがいも合わせてから数える
+  if (closed) { toast("この日は別の画面で遊び終えています"); return home(); }
   const m = missOf(), st = starsOf(m);
   Depth.mark(cur.tag, m, P.name); // まちがい・ヒントがあれば復習へ、復習中なら次の間へ
   const r = s.runs[MODE], fin = r && r.mode !== "e" && r.res.length >= r.list.length;

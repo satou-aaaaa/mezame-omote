@@ -113,7 +113,7 @@ check("言い方：「絶対」と言い切らない", !/絶対に安全|絶対�
   check("お金・賭けと、眠らせる薬の話を入れない（satou さんの決まり）", !/賭け|かけ金|ベット|💰|薬/.test(own + gen + og));
   // ゲームごとに手で書く所（説明・遊び方・2段目・ホームの1行目・2段目のまちがいの案内・manifest）が、このゲームの言葉で書いてある（incidents/2026-11-18-game-copy-hand-written-text.md）
   const desc = (html.match(/<meta name="description" content="([^"]+)"/) || [])[1] || "";
-  check("手で書く所：説明・遊び方・ホームの1行目・2段目の問いとまちがいの案内・manifest が「実験ごと／起きた回ごと／目覚め」の言葉", /実験ごと/.test(desc) && /起きた回ごと/.test(desc) && /実験ごと/.test(own.match(/<dialog id="howto"[\s\S]*?<\/dialog>/)[0]) && /表なら1回、裏なら2回起こす/.test(own) && G.STEP2.every((x) => /目覚め/.test(x.ask)) && /MISS2 = \{[\s\S]*?表の実験[\s\S]*?1回目の目覚め/.test(own) && /起きた回ごと/.test(JSON.parse(mfs).description)); }
+  check("手で書く所：説明・遊び方・ホームの1行目・2段目の問いとまちがいの案内・manifest が「実験ごと／起きた回ごと／目覚め」の言葉", /実験ごと/.test(desc) && /起きた回ごと/.test(desc) && /実験ごと/.test((own.match(/<dialog id="howto"[\s\S]*?<\/dialog>/) || [""])[0]) && /表なら1回、裏なら2回起こす/.test(own) && G.STEP2.every((x) => /目覚め/.test(x.ask)) && /MISS2 = \{[\s\S]*?表の実験[\s\S]*?1回目の目覚め/.test(own) && /起きた回ごと/.test(JSON.parse(mfs).description)); }
 { const og = readFileSync(path.join(root, "tools/make-og.cjs"), "utf8"), m = og.match(/OPTS = (\[[^\n]+\]);/), opts = m ? JSON.parse(m[1]) : [], ok = opts.filter((o) => o[2]), b = G.make("p0a1b2|og"), sc = og.match(/SCENE = \{ coin: "ふつうのコイン", heads: (\d), tails: (\d) \}/);
   check("共有画像の場面は基本の形（ふつうのコイン・表なら1回・裏なら2回）で、正解の組は data.js の答えと同じ・ほかの組は答えでない（incidents/2026-11-17-og-scene-left-from-copy.md）", sc && +sc[1] === b.a && +sc[2] === b.b && ok.length === 1 && `${ok[0][0]}|${ok[0][1]}` === b.ans && opts.filter((o) => !o[2]).every((o) => `${o[0]}|${o[1]}` !== b.ans), JSON.stringify(opts)); }
 check("画面にお笑いの言葉を入れない（本物っぽく）", !/お笑い|ギャグ|ツッコミ|なんでやねん|（うそ）/.test(html + gen));
@@ -143,10 +143,12 @@ await new Promise((r) => server.once("listening", r));
 const url = `http://127.0.0.1:${server.address().port}/`;
 const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
 const errors = [];
-const TODAY = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10);
+// 時計をそろえる：QA が作るページは、日本時間の TODAY の正午から進む。深夜0時をまたいで検査が進んでも、検査の基準日とゲームの日付（todayKey・depth.js の today）が同じ（CodeRabbit mezame-omote#1）
+const T0 = Date.now(), TODAY = new Date(T0 + 9 * 3600e3).toISOString().slice(0, 10), CLOCK = Date.parse(TODAY + "T03:00:00Z") - T0;
+async function newCtx(o) { const c = await browser.newContext(o); await c.addInitScript((sh) => { const n = Date.now; Date.now = () => n() + sh; }, CLOCK); return c; }
 const dayBefore = (n) => new Date(Date.parse(TODAY) - n * 864e5).toISOString().slice(0, 10);
 async function newPage(w = 390, ctx) {
-  const c = ctx || await browser.newContext({ viewport: { width: w, height: 800 } });
+  const c = ctx || await newCtx({ viewport: { width: w, height: 800 } });
   await c.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.abort());
   const p = await c.newPage();
   p.on("pageerror", (e) => errors.push(e.message));
@@ -172,10 +174,11 @@ try {
   // はじめて：遊び方が出る・文字の大きさ
   const p = await newPage();
   check("はじめて開くと遊び方が出る", await p.locator("#core-coach").waitFor({ timeout: 3000 }).then(() => true, () => false));
-  { const c = await browser.newContext(); const r = await c.newPage(); await r.goto(url); await r.waitForTimeout(200); let again = 0;
-    for (let i = 0; i < 10; i++) { await r.evaluate(() => localStorage.clear()); await r.reload(); await r.waitForTimeout(200); await r.keyboard.press("Escape"); await r.reload(); await r.waitForTimeout(200); again += await r.locator("#howto[open]").count(); }
-    check("遊び方を Esc で閉じてすぐ読み直しても出ない（10回）", again === 0);
-  { const c = await browser.newContext(); const r = await c.newPage(); const big = []; // 題が h1{flex:1} で縦に伸び（伸びない形と比べて4pxより高ければ失敗）、iPad の縦で大きなすき間が出た（shared-workflows incidents/2026-11-07-title-stretched.md）
+  { const c = await newCtx(); const r = await c.newPage(); await r.goto(url); await r.waitForTimeout(200); let again = 0;
+    let shown = 0, closed = 0; // はじめに出るのは吹き出し #core-coach。押す前に出ている・Esc の直後に消える・読み直しても出ない、を見る（CodeRabbit mezame-omote#1）
+    for (let i = 0; i < 10; i++) { await r.evaluate(() => localStorage.clear()); await r.reload(); shown += await r.locator("#core-coach").waitFor({ timeout: 3000 }).then(() => 1, () => 0); await r.keyboard.press("Escape"); closed += await r.locator("#core-coach").isVisible() ? 0 : 1; await r.reload(); await r.waitForTimeout(200); again += await r.locator("#core-coach").count() + await r.locator("#howto[open]").count(); }
+    check("遊び方を Esc で閉じてすぐ読み直しても出ない（10回。押す前は吹き出しが出ていて、Esc の直後に消える）", shown === 10 && closed === 10 && again === 0, `出た ${shown}・Esc で消えた ${closed}・読み直して出た ${again}`);
+  { const c = await newCtx(); const r = await c.newPage(); const big = []; // 題が h1{flex:1} で縦に伸び（伸びない形と比べて4pxより高ければ失敗）、iPad の縦で大きなすき間が出た（shared-workflows incidents/2026-11-07-title-stretched.md）
     for (const [w, h] of [[820, 1180], [390, 844], [1280, 800]]) { await r.setViewportSize({ width: w, height: h }); await r.goto(url); await r.waitForTimeout(200); await r.keyboard.press("Escape"); await r.waitForTimeout(100);
       const v = await r.evaluate(() => { const e = [...document.querySelectorAll(".title")].find((x) => x.offsetParent); if (!e) return null; const h = e.getBoundingClientRect().height; const f = e.style.flex; e.style.flex = "none"; const n = e.getBoundingClientRect().height; e.style.flex = f; return h - n; });
       if (v === null || v > 4) big.push(`${w}x${h}:${v === null ? "題なし" : "+" + Math.round(v) + "px"}`); }
@@ -327,8 +330,8 @@ try {
 
   // カレンダー・あとから：過去の日の記録を置いて見る。第1回から日がたっていなくても見られるよう、時計を10日進める
   {
-    const SHIFT = 10 * 864e5, TODAY = new Date(Date.now() + 9 * 3600e3 + SHIFT).toISOString().slice(0, 10), dayBefore = (n) => new Date(Date.parse(TODAY) - n * 864e5).toISOString().slice(0, 10);
-    const cx = await browser.newContext({ viewport: { width: 390, height: 800 } });
+    const SHIFT = 10 * 864e5, TODAY = new Date(Date.now() + CLOCK + 9 * 3600e3 + SHIFT).toISOString().slice(0, 10), dayBefore = (n) => new Date(Date.parse(TODAY) - n * 864e5).toISOString().slice(0, 10);
+    const cx = await newCtx({ viewport: { width: 390, height: 800 } });
     await cx.addInitScript((sh) => { const o = Date.now; Date.now = () => o() + sh; }, SHIFT);
     const q = await newPage(390, cx);
     await q.evaluate(([d2, d3]) => { localStorage.setItem("mzo-v1", JSON.stringify({ v: 1, tut: true, days: { [d2]: { m: [0, 0, 0, 0, 0], k: [] }, [d3]: { m: [1, 0, 0, 2, 0], k: [] } }, hdays: {}, adays: {}, dex: {}, runs: {}, kofi: {}, ach: {}, ebest: 0 })); }, [dayBefore(2), dayBefore(3)]);
@@ -348,13 +351,24 @@ try {
       await q.waitForTimeout(150);
       const s = await mem(q);
       check("あとからは adays に入り、今日の記録・続けた日には数えない", s.adays[d] && !s.days[d] && (await q.locator(".share").count()) === 0 && (await q.locator(".kofi").count()) === 0);
+      if (lateList.length > 1) { // あとからの途中で、別のタブがその日を今日の5問として終えていたら、解いても数えない（bank が記録しないので、解答数・復習だけ増えないように。CodeRabbit mezame-omote#1）
+        const d2 = lateList[1], sum = (x) => Object.values(x.dex).reduce((a, b) => a + b, 0);
+        await q.evaluate((d) => __nm.start("a", d), d2); await q.waitForSelector(".ch");
+        await q.click(`.ch[data-j="${await ansIdx(q)}"]`); await q.waitForSelector(".why button");
+        const dex0 = sum(await mem(q)), dep0 = await q.evaluate(() => localStorage.getItem("mzo-depth")); // 1段目で「自信」の回の印は書く。そのあとを比べる
+        await q.evaluate((d) => __nm.save((s) => { s.days[d] = { m: [0, 0, 0, 0, 0], k: [] }; }), d2);
+        await q.click(await ans2Sel(q));
+        await q.waitForTimeout(200);
+        const s2 = await mem(q);
+        check("あとから：別のタブでその日を終えていたら、解いても解答数・復習に数えず、ホームへ戻る", sum(s2) === dex0 && !s2.adays[d2] && !s2.runs["a:" + d2] && (await q.locator(".verdict").count()) === 0 && (await q.evaluate(() => localStorage.getItem("mzo-depth"))) === dep0, `解答数 ${dex0}→${sum(s2)}・adays ${!!s2.adays[d2]}・途中 ${!!s2.runs["a:" + d2]}・結果 ${await q.locator(".verdict").count()}・復習 ${(await q.evaluate(() => localStorage.getItem("mzo-depth"))) === dep0}`);
+      }
     } else check("あとから：遊べる日がある", false, "第1回の日から日がたっていない");
     await q.context().close();
   }
 
   // 終えた回（gone）がある側の保存に失敗し、別のタブが古い回を新しく保存しても、終えた回を戻さない（shindo-yomi PR #1 の CodeRabbit。GameStore の after で落とす）
   {
-    const ctx = await browser.newContext({ viewport: { width: 390, height: 800 } });
+    const ctx = await newCtx({ viewport: { width: 390, height: 800 } });
     const g = await newPage(390, ctx);
     const left = await g.evaluate(() => {
       const r = { mode: "e", date: __nm.todayKey(), list: ["p1a1b3|1", "p0a1b2|1"], res: [{ m: 0 }], cur: null, id: "gone1" };
@@ -369,7 +383,7 @@ try {
   }
   // 同じ問題の途中で、保存に失敗した側と保存できた側のまちがいを合わせる（CodeRabbit shindo-yomi#1）
   {
-    const ctx = await browser.newContext({ viewport: { width: 390, height: 800 } });
+    const ctx = await newCtx({ viewport: { width: 390, height: 800 } });
     const g = await newPage(390, ctx);
     const got = await g.evaluate(() => {
       const base = __nm.load(), mk = (w, w2) => ({ mode: "p", date: __nm.todayKey(), list: ["p1a1b3|m1", "p0a1b2|m1"], res: [], cur: { i: 0, tag: "p1a1b3|m1", wrong: w, hints: 0, step: 2, w2 }, id: "mg1" });
@@ -386,7 +400,7 @@ try {
 
   // 古いタブ：同じ問題を2つのタブで開き、片方で答えたら、もう片方は二重に入れない
   {
-    const ctx = await browser.newContext({ viewport: { width: 390, height: 800 } });
+    const ctx = await newCtx({ viewport: { width: 390, height: 800 } });
     const a = await newPage(390, ctx); await closeHow(a); await a.click("#go-d");
     const b = await ctx.newPage(); b.on("pageerror", (e) => errors.push(e.message)); await b.goto(url); await b.waitForTimeout(150); await b.click("#go-d");
     await solve(a);
@@ -505,7 +519,7 @@ try {
 
   // 見やすさの設定を全部入れても、ページの一番下まで動ける（読み上げの class が html に当たって固まった。2026-11-05）
   {
-    const ctx = await browser.newContext({ viewport: { width: 390, height: 700 } });
+    const ctx = await newCtx({ viewport: { width: 390, height: 700 } });
     await ctx.addInitScript(() => localStorage.setItem("a11y-v1", JSON.stringify({ read: true, cvd: true, calm: true, say: true, ruby: true })));
     const q = await newPage(390, ctx); await closeHow(q);
     const r = await q.evaluate(() => { window.scrollTo(0, 1e5); const f = document.querySelector("footer").getBoundingClientRect(); return [scrollY, Math.round(f.bottom), innerHeight, getComputedStyle(document.documentElement).position]; });
@@ -517,9 +531,11 @@ try {
     const q = await newPage(); await closeHow(q);
     await q.focus("#go-d"); await q.keyboard.press("Enter"); await q.waitForTimeout(100);
     const j = await ansIdx(q);
-    await q.focus(`.ch[data-j="${j}"]`); await q.keyboard.press("Enter"); await q.waitForTimeout(100);
-    if (await q.locator(".why button").count()) { await q.focus(await ans2Sel(q)); await q.keyboard.press("Enter"); await q.waitForTimeout(100); }
-    check("キーボードだけで選んで答えられる（2段目もキーボードで）", await q.locator(".verdict").count() === 1);
+    // focus() で直に選ばず、Tab で答えのボタンまで進めてから Enter（Tab の順から外れていたら届かない。CodeRabbit mezame-omote#1）
+    const tabTo = async (sel) => { for (let k = 0; k < 40; k++) { await q.keyboard.press("Tab"); if (await q.evaluate((s) => document.activeElement === document.querySelector(s), sel)) return true; } return false; };
+    const reach1 = await tabTo(`.ch[data-j="${j}"]`); if (reach1) await q.keyboard.press("Enter"); await q.waitForTimeout(100);
+    let reach2 = true; if (await q.locator(".why button").count()) { reach2 = await tabTo(await ans2Sel(q)); if (reach2) await q.keyboard.press("Enter"); await q.waitForTimeout(100); }
+    check("キーボードだけで選んで答えられる（Tab で答えのボタンへ届く。2段目もキーボードで）", reach1 && reach2 && await q.locator(".verdict").count() === 1, `1段目 ${reach1}・2段目 ${reach2}`);
     await q.context().close();
   }
 } catch (e) { check("ブラウザでの検査が最後まで動く", false, e.stack.split("\n").slice(0, 3).join(" ")); }
@@ -550,6 +566,17 @@ try {
   check("記録の数の所に数でも文字でもない物（{toString:null}）が入っても、ホームが出る（toppu-yomi #1 の CodeRabbit）", await q.locator("#go-dex").count() === 1);
   await q.evaluate((d) => { localStorage.setItem("mzo-v1", JSON.stringify({ v: 1, tut: true, days: {}, hdays: {}, adays: {}, dex: {}, runs: { p: { mode: "p", date: d, list: ["p1a1b3|w2x"], res: [], cur: { wrong: [], hints: 0, step: 2, w2: [{ toString: null }, "kaze"] }, id: "w2x" } }, kofi: {}, ach: {}, ebest: 0 })); }, TODAY); await q.reload(); await q.waitForTimeout(150);
   check("途中の2段目のまちがい w2 に文字でない物（{toString:null}）が入っても、ホームが出る（toukyu-yomi #1 の CodeRabbit）", await q.locator("#go-dex").count() === 1);
+  await q.close(); }
+// 別のタブでこの問題の1段目を終えたあと、古い画面で1段目のヒント・まちがいを押しても数えず、2段目へそろえる（CodeRabbit mezame-omote#1）
+{ const q = await newPage(); await closeHow(q);
+  await q.evaluate(() => __nm.start("p", 0)); await q.waitForSelector(".ch");
+  const other = () => q.evaluate(() => __nm.save((s) => { const r = s.runs.p, c = __nm.cur(); r.cur = { i: c.i, tag: c.tag, wrong: [], hints: 0, step: 2, w2: [], jd: null, h2: 0 }; }));
+  await other(); await q.click(`.ch[data-j="${await wrongIdx(q)}"]`); await q.waitForSelector(".why button", { timeout: 2000 }).catch(() => {});
+  const a = await q.evaluate(() => { const c = __nm.cur(); return { w: c.wrong.length, h: c.hints, st: c.step, saved: __nm.load().runs.p.cur.wrong.length }; });
+  await q.evaluate(() => __nm.start("p", 0)); await q.waitForSelector(".ch"); await other();
+  if (await q.locator("#hint").count()) await q.click("#hint"); await q.waitForSelector(".why button", { timeout: 2000 }).catch(() => {});
+  const b = await q.evaluate(() => { const c = __nm.cur(); return { w: c.wrong.length, h: c.hints, st: c.step, saved: __nm.load().runs.p.cur.hints }; });
+  check("別のタブで1段目を終えたあと、古い画面の1段目のまちがい・ヒントは数えず2段目を出す", a.w === 0 && a.saved === 0 && a.st === 2 && b.h === 0 && b.saved === 0 && b.st === 2 && (await q.locator(".why button").count()) > 0, JSON.stringify([a, b]));
   await q.close(); }
 { const used = new Set(G.KINDS.map((k) => k.s2));
   check("2段目：どの種類も3つの形のどれか", G.KINDS.every((k) => G.STEP2.some((x) => x.id === k.s2)) && used.size === 3, [...used].join()); }
